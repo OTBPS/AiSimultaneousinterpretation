@@ -54,13 +54,31 @@ class Phase:
     label: str
     samples: dict[str, list[float]] = field(default_factory=dict)
     battery_mw: list[float] = field(default_factory=list)
+    cap_start: float = 0.0          # RemainingCapacity, mWh
+    cap_end: float = 0.0
+    wall_s: float = 0.0
 
     def mean(self, key: str) -> float:
         xs = self.samples.get(key) or []
         return statistics.mean(xs) if xs else 0.0
 
     def battery(self) -> float:
-        return statistics.mean(self.battery_mw) if self.battery_mw else 0.0
+        """Whole-machine watts from accumulated energy.
+
+        NOT the mean of DischargeRate: this machine's gauge latches a new
+        value only about every 30 s, so averaging it over a short phase just
+        reports whichever value happened to be latched. Energy drawn from the
+        pack over the window is immune to that lag.
+        """
+        if self.cap_start and self.cap_end and self.wall_s > 0:
+            drained_mwh = self.cap_start - self.cap_end
+            if drained_mwh > 0:
+                return drained_mwh * 3600.0 / self.wall_s
+        return 0.0
+
+    def battery_quantisation_w(self, step_mwh: float = 110.0) -> float:
+        """Worst-case error from the gauge's coarse steps, in watts."""
+        return step_mwh * 3600.0 / self.wall_s if self.wall_s else 0.0
 
 
 def _ps(script: str) -> str:
@@ -87,7 +105,7 @@ def sample_loop(phase: Phase, stop: threading.Event, battery: bool) -> None:
         "    $s = Get-CimInstance -Namespace root\\wmi -ClassName BatteryStatus "
         "         -ErrorAction SilentlyContinue; "
         "    if ($s) { $bat = $s.DischargeRate } }; "
-        "  Write-Output ($v -join ',') + ',' + $bat }"
+        "  Write-Output (($v -join ',') + ',' + $bat) }"
     )
     proc = subprocess.Popen(
         ["powershell", "-NoProfile", "-Command", script],
@@ -103,7 +121,7 @@ def sample_loop(phase: Phase, stop: threading.Event, battery: bool) -> None:
             line = proc.stdout.readline()
             if not line:
                 break
-            parts = [p for p in line.strip().split(",") if p != ""]
+            parts = [p.strip() for p in line.strip().split(",") if p.strip() != ""]
             if len(parts) < len(keys):
                 continue
             if first:                       # first sample has no interval yet
@@ -124,18 +142,43 @@ def sample_loop(phase: Phase, stop: threading.Event, battery: bool) -> None:
         proc.kill()
 
 
+def remaining_capacity() -> float:
+    out = _ps(r"(Get-CimInstance -Namespace root\wmi -ClassName BatteryStatus)"
+              ".RemainingCapacity")
+    try:
+        return float(out.strip().splitlines()[0])
+    except Exception:                                      # noqa: BLE001
+        return 0.0
+
+
 def measure(phase: Phase, seconds: float, battery: bool) -> Phase:
     stop = threading.Event()
     t = threading.Thread(target=sample_loop, args=(phase, stop, battery),
                          daemon=True)
     t.start()
+
+    if battery:
+        phase.cap_start = remaining_capacity()
+    t_start = time.perf_counter()
+
+    tty = sys.stdout.isatty()
+    if not tty:                    # a carriage-return countdown spams a log
+        print(f"  {phase.label:<34s} …", flush=True)
     for remaining in range(int(seconds), 0, -1):
-        print(f"\r  {phase.label:<34s} {remaining:3d}s ", end="", flush=True)
+        if tty:
+            print(f"\r  {phase.label:<34s} {remaining:3d}s ", end="", flush=True)
         time.sleep(1)
+
     stop.set()
+    phase.wall_s = time.perf_counter() - t_start
+    if battery:
+        phase.cap_end = remaining_capacity()
     t.join(timeout=5)
-    print(f"\r  {phase.label:<34s} done "
-          f"({len(phase.samples.get('pkg', []))} samples)")
+
+    print(f"{'' if not tty else chr(13)}  {phase.label:<34s} done "
+          f"({len(phase.samples.get('pkg', []))} samples"
+          + (f", {phase.cap_start - phase.cap_end:.0f} mWh drawn"
+             if battery else "") + ")")
     return phase
 
 
@@ -213,6 +256,9 @@ def main() -> int:
     ap.add_argument("--battery", action="store_true",
                     help="also record battery discharge (unplug the charger)")
     ap.add_argument("--wav", default="bench/speech.wav")
+    ap.add_argument("--skip-idle", action="store_true",
+                    help="only baseline vs translating (halves the wall time; "
+                         "RAPL already shows idle costs ~0)")
     args = ap.parse_args()
 
     setup_console()
@@ -238,14 +284,17 @@ def main() -> int:
     print("  waiting for models to load …", end="", flush=True)
     time.sleep(16)
     print(" ok")
-    idle = measure(Phase("idle", "2/3 app idle (silence)"),
-                   args.seconds, args.battery)
+    idle = Phase("idle", "app idle (skipped)")
+    if not args.skip_idle:
+        idle = measure(Phase("idle", "2/3 app idle (silence)"),
+                       args.seconds, args.battery)
 
     stop_audio = threading.Event()
     play_wav(ROOT / args.wav, stop_audio)
     time.sleep(3)
-    active = measure(Phase("active", "3/3 app translating"),
-                     args.seconds, args.battery)
+    active = measure(
+        Phase("active", ("2/2" if args.skip_idle else "3/3") + " app translating"),
+        args.seconds, args.battery)
     stop_audio.set()
     time.sleep(1)
     kill_app()
@@ -255,28 +304,40 @@ def main() -> int:
     print("SoC power (Intel RAPL -- excludes display, wi-fi, fans)")
     print("=" * 68)
     print(f"{'':<26s}{'PKG':>10s}{'CPU':>10s}{'iGPU':>10s}")
-    for ph in (baseline, idle, active):
+    for ph in (p for p in (baseline, idle, active) if p.samples):
         print(f"{ph.name:<26s}"
               f"{ph.mean('pkg')/1000:>9.2f}W"
               f"{ph.mean('cpu')/1000:>9.2f}W"
               f"{ph.mean('igpu')/1000:>9.2f}W")
     print("-" * 68)
-    d_idle = (idle.mean("pkg") - baseline.mean("pkg")) / 1000
+    d_idle = ((idle.mean("pkg") - baseline.mean("pkg")) / 1000
+              if idle.samples else float("nan"))
     d_act = (active.mean("pkg") - baseline.mean("pkg")) / 1000
-    print(f"{'app cost, idle':<26s}{d_idle:>9.2f}W")
+    if idle.samples:
+        print(f"{'app cost, idle':<26s}{d_idle:>9.2f}W")
     print(f"{'app cost, translating':<26s}{d_act:>9.2f}W")
 
     if args.battery and any(p.battery() for p in (baseline, idle, active)):
         print("\n" + "=" * 68)
         print("Whole-machine draw (battery discharge)")
         print("=" * 68)
-        for ph in (baseline, idle, active):
+        print("(from energy drawn out of the pack, not the lagging "
+              "DischargeRate reading)")
+        for ph in (p for p in (baseline, idle, active) if p.battery()):
             w = ph.battery() / 1000
             hours = (cap_mwh / ph.battery()) if ph.battery() else 0
-            print(f"{ph.name:<26s}{w:>9.2f}W   ~{hours:>5.1f} h of battery")
+            err = ph.battery_quantisation_w() / 1000
+            print(f"{ph.name:<26s}{w:>9.2f}W ±{err:.2f}   "
+                  f"~{hours:>5.1f} h of battery")
         extra = (active.battery() - baseline.battery()) / 1000
+        worst = (active.battery_quantisation_w()
+                 + baseline.battery_quantisation_w()) / 1000
         print("-" * 68)
-        print(f"{'app cost, translating':<26s}{extra:>9.2f}W")
+        print(f"{'app cost, translating':<26s}{extra:>9.2f}W ±{worst:.2f}")
+        if worst > abs(extra) * 0.5:
+            print("\n  WARNING: the gauge's step size is large relative to the")
+            print("  difference being measured. Re-run with a longer --seconds")
+            print("  (300+) before trusting this number.")
     elif cap_mwh:
         est = d_act
         print(f"\nRAPL-only estimate: translating adds ~{est:.1f} W to the SoC.")
