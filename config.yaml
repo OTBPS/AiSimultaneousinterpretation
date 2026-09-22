@@ -1,0 +1,52 @@
+# Simultaneous interpretation -- user configuration.
+# Every value here has a default in app/config.py; this file only overrides.
+
+audio:
+  source: loopback        # loopback | mic
+  device: null            # null = system default, or a case-insensitive name substring
+  backend: pyaudiowpatch  # pyaudiowpatch | soundcard
+
+vad:
+  model: 'D:\AI\Models\silero_vad.onnx'
+  threshold: 0.5
+  endpoint_silence_ms: 550   # PRIMARY latency knob: silence before committing (300-800)
+  eager_punct_ms: 250        # commit earlier when the partial already ends in .?!
+  min_speech_ms: 300
+  max_segment_s: 8.0
+  preroll_ms: 300
+
+asr:
+  model: 'D:\AI\Models\whisper-large-v3-turbo-int8-ov'
+  device: GPU
+  language: en
+  partial_interval_ms: 1500  # English partial refresh while speaking (0 = off)
+  drop_hallucinations: true
+
+mt:
+  model: 'D:\AI\Models\Qwen3-4B-int4-ov'
+  fast_model: 'D:\AI\Models\Qwen2.5-1.5B-Instruct-int4-ov'
+  device: GPU
+  max_new_tokens: 200
+  context_pairs: 3
+  chat_reset_every: 8
+  fallback_on_backlog: 4     # queue depth at which we switch to fast_model
+
+runtime:
+  # E1 measured ASR p95 3.15x slower and MT decode 1.54x slower when run
+  # concurrently on the shared iGPU (sum 4.69 vs threshold 2.0). Serial wins.
+  gpu_concurrency: serial    # serial | parallel  -- do not change without re-running E1
+  cache_dir: .ovcache        # OpenVINO compiled-blob cache: startup 12.9s -> 3.4s
+  cache_budget_gb: 8.0       # cache is LRU-pruned to this, and wiped on runtime change
+  log_level: info
+  metrics: true
+
+glossary:
+  path: glossary.tsv
+  enabled: true
+
+ui:
+  opacity: 0.85
+  font_size: 24
+  max_lines: 3
+  show_source: true
+  click_through: true

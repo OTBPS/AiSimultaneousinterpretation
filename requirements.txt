@@ -1,0 +1,19 @@
+# Runtime deps for the simultaneous interpretation app.
+# Installed with:  pip install --user -r requirements.txt
+# (no venv on this machine -- `python -m venv` fails with an ensurepip error)
+#
+# Deliberately AVOIDS torch: the `silero-vad` pip package hard-depends on
+# torch+torchaudio (~2.5 GB) for a 2 MB model. We run the ONNX graph directly.
+
+openvino==2026.4.0
+openvino-genai==2026.4.0.0
+numpy==2.5.3
+soundfile==0.14.0
+
+PyAudioWPatch==0.2.12.8   # WASAPI loopback + mic capture (primary backend)
+soundcard==0.4.6          # fallback capture backend
+soxr==1.1.0               # fast resampling to 16 kHz
+onnxruntime==1.30.0       # Silero VAD only (CPU)
+PyYAML==6.0.3
+
+PySide6==6.11.2           # overlay UI (frontend)

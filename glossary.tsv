@@ -1,0 +1,12 @@
+# English<TAB>中文   -- user-editable term map, hot-reloaded on save.
+# Lines starting with # are comments. Matching is case-insensitive, word-boundary.
+prefill	预填充
+decode	解码
+throughput	吞吐量
+latency	延迟
+bandwidth	带宽
+inference	推理
+quantization	量化
+boil the ocean	好高骛远
+low-hanging fruit	容易实现的目标
+circle back	稍后再议
