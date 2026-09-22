@@ -9,6 +9,7 @@ from __future__ import annotations
 import logging
 import sys
 import threading
+from pathlib import Path
 
 from PySide6.QtCore import QPoint, Qt, QTimer
 from PySide6.QtGui import QAction, QActionGroup, QCursor, QGuiApplication, QIcon
@@ -25,6 +26,18 @@ from .subtitle_view import SubtitleView
 log = logging.getLogger("ui")
 
 DRAIN_HZ = 30
+ICON_PATH = Path(__file__).resolve().parent.parent.parent / "assets" / "app.ico"
+
+
+def app_icon(widget: QWidget) -> QIcon:
+    """The real .ico. QIcon.fromTheme returns null on Windows, which silently
+    degrades the tray to a generic glyph the user cannot find."""
+    if ICON_PATH.exists():
+        icon = QIcon(str(ICON_PATH))
+        if not icon.isNull():
+            return icon
+    return widget.style().standardIcon(
+        widget.style().StandardPixmap.SP_MediaVolume)
 
 
 def _set_click_through(widget: QWidget, enabled: bool) -> None:
@@ -62,6 +75,7 @@ class Overlay(QWidget):
         self._drag_from: QPoint | None = None
         self._click_through = False
         self._paused = False
+        self._announced = False
 
         self.setWindowTitle("同声传译")
         self.setWindowFlags(Qt.WindowType.FramelessWindowHint
@@ -97,10 +111,7 @@ class Overlay(QWidget):
     # ------------------------------------------------------------- tray
     def _build_tray(self) -> QSystemTrayIcon:
         tray = QSystemTrayIcon(self)
-        icon = QIcon.fromTheme("audio-input-microphone")
-        tray.setIcon(icon if not icon.isNull()
-                     else self.style().standardIcon(
-                         self.style().StandardPixmap.SP_MediaVolume))
+        tray.setIcon(app_icon(self))
         tray.setToolTip("同声传译 EN→ZH")
 
         menu = QMenu()
@@ -215,6 +226,18 @@ class Overlay(QWidget):
                 self.view.skip_line(ev.line_id, ev.source)
             elif isinstance(ev, StatusEvent):
                 self.view.set_status(ev.detail or ev.state)
+                if ev.state == "error":
+                    self._tray.showMessage("同声传译 — 启动失败", ev.detail,
+                                           QSystemTrayIcon.MessageIcon.Critical,
+                                           10000)
+                elif ev.state == "ready" and not self._announced:
+                    # The overlay is translucent and has no taskbar button, so
+                    # without this the app looks like it never started.
+                    self._announced = True
+                    self._tray.showMessage(
+                        "同声传译已启动",
+                        f"{ev.detail}\n字幕窗在屏幕底部；右键托盘图标可切换音频来源。",
+                        app_icon(self), 6000)
                 # Click-through is only armed once we are actually running, so
                 # a startup failure still leaves a window the user can click.
                 if (ev.state == "ready" and self.cfg.ui.click_through

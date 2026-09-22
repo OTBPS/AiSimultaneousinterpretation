@@ -57,7 +57,7 @@ def build(name: str, console: bool, cli: bool) -> Path:
     path = desktop_dir() / f"{name}.lnk"
     lnk = shell.CreateShortCut(str(path))
     lnk.TargetPath = str(interpreter(console))
-    lnk.Arguments = f'"run.py" {"--cli" if cli else "--gui"}'
+    lnk.Arguments = f'"{ROOT / "run.py"}" {"--cli" if cli else "--gui"}'
     lnk.WorkingDirectory = str(ROOT)
     lnk.IconLocation = f"{ROOT / 'assets' / 'app.ico'},0"
     lnk.Description = "同声传译 EN→ZH — 本机核显实时翻译"
@@ -75,7 +75,7 @@ def _build_via_powershell(name: str, console: bool, cli: bool) -> Path:
 $ws = New-Object -ComObject WScript.Shell
 $lnk = $ws.CreateShortcut({_ps(str(path))})
 $lnk.TargetPath = {_ps(str(interpreter(console)))}
-$lnk.Arguments = {_ps('"run.py" ' + ('--cli' if cli else '--gui'))}
+$lnk.Arguments = {_ps(f'"{ROOT / "run.py"}" ' + ('--cli' if cli else '--gui'))}
 $lnk.WorkingDirectory = {_ps(str(ROOT))}
 $lnk.IconLocation = {_ps(f'{icon},0')}
 $lnk.Description = {_ps('同声传译 EN→ZH — 本机核显实时翻译')}
