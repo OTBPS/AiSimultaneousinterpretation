@@ -9,6 +9,7 @@
 from __future__ import annotations
 
 import argparse
+import logging
 import signal
 import sys
 import threading
@@ -18,7 +19,10 @@ ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(ROOT))
 
 from app import config                                    # noqa: E402
-from app.console import setup_console                     # noqa: E402
+from app.console import (has_console, install_crash_log,       # noqa: E402
+                         setup_console)
+
+LOG_FILE = ROOT / "logs" / "app.log"
 
 
 def parse_args(argv=None):
@@ -39,7 +43,8 @@ def parse_args(argv=None):
 
 def main(argv=None) -> int:
     args = parse_args(argv)
-    setup_console()
+    setup_console(log_file=LOG_FILE)
+    install_crash_log(LOG_FILE)
 
     if args.devices:
         from app.audio.capture import list_devices
@@ -50,7 +55,13 @@ def main(argv=None) -> int:
     try:
         cfg = config.load(args.config, root=ROOT)
     except (ValueError, FileNotFoundError) as e:
-        print(f"config error: {e}", file=sys.stderr)
+        logging.getLogger("config").critical("%s", e)
+        if not has_console():
+            import ctypes
+            ctypes.windll.user32.MessageBoxW(
+                None, f"配置错误：\n{e}", "同声传译", 0x10)
+        else:
+            print(f"config error: {e}", file=sys.stderr)
         return 2
 
     if args.source:
@@ -62,7 +73,7 @@ def main(argv=None) -> int:
     if args.no_metrics:
         cfg.runtime.metrics = False
 
-    setup_console(cfg.runtime.log_level)
+    setup_console(cfg.runtime.log_level, LOG_FILE)
 
     # Bound the on-disk footprint before anything writes to it.
     from app import storage
