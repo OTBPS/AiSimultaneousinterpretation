@@ -59,7 +59,7 @@ Qwen3-4B-ft-int4-ov/  (2.3 GB) ──── 拷贝 ────► D:\AI\Models\
 包括其中的缺陷。不要清洗这些噪声。
 
 ```bash
-python training/0_prepare_corpus.py --audio D:	alks --out corpus.txt
+python training/0_prepare_corpus.py --audio "D:\talks" --out corpus.txt
 ```
 
 实测 22× 实时（比纯 ASR 的 38× 慢，因为加了 VAD 和断句）：一小时音频约 2.7 分钟。
@@ -121,7 +121,7 @@ python tools/eval_translation.py \
   --models D:\AI\Models\Qwen3-4B-int4-ov D:\AI\Models\Qwen3-4B-ft-int4-ov
 ```
 
-基线已经存在 `eval_baseline.json`（12/12 通过，平均 1219 ms/句）。
+基线已经存在 `eval_baseline.json`（12/12 通过，平均 1230 ms/句）。
 
 ## 诚实的预期
 
