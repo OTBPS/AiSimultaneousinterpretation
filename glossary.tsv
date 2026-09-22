@@ -7,6 +7,9 @@ latency	延迟
 bandwidth	带宽
 inference	推理
 quantization	量化
-boil the ocean	好高骛远
+quarter over quarter	环比
+year over year	同比
+# 习语交给模型自己译更自然, 这里只保留精度重要的技术/财务词
+# boil the ocean	好高骛远
 low-hanging fruit	容易实现的目标
 circle back	稍后再议

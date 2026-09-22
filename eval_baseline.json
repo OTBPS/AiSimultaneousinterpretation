@@ -1,0 +1,100 @@
+{
+  "Qwen3-4B-int4-ov": [
+    {
+      "id": "colloquial",
+      "en": "Yeah, no, I mean — we could ship it Friday, but honestly? Gonna be rough.",
+      "zh": "嗯，我意思是——我们周五能发货，但说实话，这会很艰难。",
+      "ms": 1594.3725999677554,
+      "ttft_ms": 829.9103999743238,
+      "issues": []
+    },
+    {
+      "id": "terminology",
+      "en": "The scheduler preempts the running thread when a higher-priority task becomes runnable, then performs a context switch.",
+      "zh": "调度器在更高优先级的任务变为可运行时抢占正在运行的线程，然后执行上下文切换。",
+      "ms": 1412.4237999785691,
+      "ttft_ms": 359.63469999842346,
+      "issues": []
+    },
+    {
+      "id": "prefill",
+      "en": "Prefill is compute-bound while decode is limited by memory bandwidth.",
+      "zh": "预填充是计算密集型的，而解码则受限于带宽。",
+      "ms": 1067.1648000134155,
+      "ttft_ms": 357.03519999515265,
+      "issues": []
+    },
+    {
+      "id": "long_clause",
+      "en": "Although the initial benchmarks suggested that the new allocator would reduce fragmentation, subsequent testing under sustained load revealed that it actually increased peak memory usage by roughly twelve percent.",
+      "zh": "尽管初始基准测试表明新分配器能减少碎片化，但后续在持续负载下的测试却显示，它实际上增加了约12%的峰值内存使用量。",
+      "ms": 1974.2473999504,
+      "ttft_ms": 360.34190002828836,
+      "issues": []
+    },
+    {
+      "id": "pronoun",
+      "en": "Context: We evaluated the Arc 140T integrated GPU against a discrete card.\nTranslate this: It turned out to be much better at prefill, though it lagged on decode.",
+      "zh": "结果发现，它在预填充方面表现要好很多，但在解码上却有所滞后。",
+      "ms": 1303.951199981384,
+      "ttft_ms": 368.49429993890226,
+      "issues": []
+    },
+    {
+      "id": "idiom_ocean",
+      "en": "Let's not boil the ocean here — just get a rough cut in front of the team by Thursday.",
+      "zh": "咱们别一上来就搞得太大太全——周四前先给团队一个粗糙的版本。",
+      "ms": 1235.1696999976411,
+      "ttft_ms": 365.97420007456094,
+      "issues": []
+    },
+    {
+      "id": "idiom_fruit",
+      "en": "That integration is low-hanging fruit, we should grab it this sprint.",
+      "zh": "那项整合是容易实现的目标，我们这个冲刺周期里应该尽快完成。",
+      "ms": 1088.5094000259414,
+      "ttft_ms": 366.87150003854185,
+      "issues": []
+    },
+    {
+      "id": "numbers",
+      "en": "Revenue grew 12.5 percent quarter over quarter, from $4.2 million to $4.7 million.",
+      "zh": "营收环比增长12.5%，从420万美元增至470万美元。",
+      "ms": 1182.6315999496728,
+      "ttft_ms": 361.8901999434456,
+      "issues": []
+    },
+    {
+      "id": "fragment",
+      "en": "copies between stages.",
+      "zh": "阶段间的复制。",
+      "ms": 469.61809997446835,
+      "ttft_ms": 370.59609999414533,
+      "issues": []
+    },
+    {
+      "id": "disfluency",
+      "en": "So the— sorry, the thing is, um, we haven't actually validated that on production hardware yet.",
+      "zh": "所以，抱歉，事情是这样的，我们还没有在生产硬件上实际验证过。",
+      "ms": 1135.946900001727,
+      "ttft_ms": 362.88930010050535,
+      "issues": []
+    },
+    {
+      "id": "acronyms",
+      "en": "The NPU handles INT8 inference while the iGPU runs the FP16 encoder.",
+      "zh": "NPU处理INT8推理，而iGPU则运行FP16编码器。",
+      "ms": 1153.3213999355212,
+      "ttft_ms": 374.7832999797538,
+      "issues": []
+    },
+    {
+      "id": "question",
+      "en": "Could you walk me through why the p95 latency regressed after the cache change?",
+      "zh": "你能详细说说为什么缓存更改后p95延迟出现了退化吗？",
+      "ms": 1145.8148999372497,
+      "ttft_ms": 369.60029997862875,
+      "issues": []
+    }
+  ]
+}

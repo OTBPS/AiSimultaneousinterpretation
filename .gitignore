@@ -6,3 +6,7 @@ logs/
 tools/e1_contention.txt
 tools/e2_cache.txt
 bench/verify.txt
+eval_noglossary.json
+*_merged/
+lora_adapter*/
+train.jsonl
