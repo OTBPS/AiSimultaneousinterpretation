@@ -19,7 +19,9 @@ asr:
   model: 'D:\AI\Models\whisper-large-v3-turbo-int8-ov'
   device: GPU
   language: en
-  partial_interval_ms: 1500  # English partial refresh while speaking (0 = off)
+  # 实测：开启会让核显功耗翻倍（2.46W -> 5.02W），只为显示一行灰色英文预览。
+  # 想要预览就设成 1500。
+  partial_interval_ms: 0     # English partial refresh while speaking (0 = off)
   drop_hallucinations: true
 
 mt:

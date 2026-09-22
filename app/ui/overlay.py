@@ -9,10 +9,11 @@ from __future__ import annotations
 import logging
 import sys
 import threading
+import time
 from pathlib import Path
 
 from PySide6.QtCore import QPoint, Qt, QTimer
-from PySide6.QtGui import QAction, QActionGroup, QCursor, QGuiApplication, QIcon
+from PySide6.QtGui import QAction, QActionGroup, QGuiApplication, QIcon
 from PySide6.QtWidgets import (QApplication, QMenu, QSystemTrayIcon, QVBoxLayout,
                                QWidget)
 
@@ -25,8 +26,29 @@ from .subtitle_view import SubtitleView
 
 log = logging.getLogger("ui")
 
-DRAIN_HZ = 30
+# Drain fast only while subtitles are moving. A fixed 30 Hz timer wakes
+# the UI 30 times a second through long silences for nothing; MT streams
+# at ~15 tok/s so 20 Hz is already faster than the content arrives.
+DRAIN_HZ_ACTIVE = 20
+DRAIN_HZ_IDLE = 5
+IDLE_AFTER_S = 2.0
 ICON_PATH = Path(__file__).resolve().parent.parent.parent / "assets" / "app.ico"
+
+
+def is_activity(ev) -> bool:
+    """Should this event hold the UI at the fast drain rate?
+
+    A MetricsEvent arrives every 2 s whether or not anything is happening, so
+    on its own it is not activity -- otherwise the UI would never idle down.
+    A backlog, however, is activity.
+
+    Module-level and pure so the rule is tested directly rather than mirrored
+    in a test (a test that re-implements the logic passes even when the real
+    code is wrong).
+    """
+    if isinstance(ev, MetricsEvent):
+        return ev.backlog > 0
+    return True
 
 
 def app_icon(widget: QWidget) -> QIcon:
@@ -93,9 +115,11 @@ class Overlay(QWidget):
         self.view.set_status("loading models…")
 
         self._tray = self._build_tray()
+        self._last_event_at = 0.0
+        self._drain_hz = DRAIN_HZ_ACTIVE
         self._timer = QTimer(self)
         self._timer.timeout.connect(self._drain)
-        self._timer.start(int(1000 / DRAIN_HZ))
+        self._timer.start(int(1000 / self._drain_hz))
 
         threading.Thread(target=self._start_pipeline, daemon=True,
                          name="pipeline-start").start()
@@ -212,8 +236,15 @@ class Overlay(QWidget):
             self.bus.emit(StatusEvent("error", str(e)))
 
     # ------------------------------------------------------------- drain
+    def _set_drain_rate(self, hz: int) -> None:
+        if hz != self._drain_hz:
+            self._drain_hz = hz
+            self._timer.setInterval(int(1000 / hz))
+
     def _drain(self) -> None:
+        saw_event = False
         for ev in self.bus.drain(256):
+            saw_event |= is_activity(ev)
             if isinstance(ev, TokenEvent):
                 self.view.append_token(ev.line_id, ev.text)
             elif isinstance(ev, LineStartEvent):
@@ -250,6 +281,13 @@ class Overlay(QWidget):
                         + ("（已切到快速模型）" if ev.using_fast_model else ""))
                 else:
                     self._tray.setToolTip("同声传译 EN→ZH")
+
+        now = time.monotonic()
+        if saw_event:
+            self._last_event_at = now
+            self._set_drain_rate(DRAIN_HZ_ACTIVE)
+        elif now - self._last_event_at > IDLE_AFTER_S:
+            self._set_drain_rate(DRAIN_HZ_IDLE)
 
     # -------------------------------------------------------- drag/move
     def mousePressEvent(self, event) -> None:               # noqa: N802

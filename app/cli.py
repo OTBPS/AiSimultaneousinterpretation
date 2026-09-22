@@ -104,15 +104,21 @@ class CliRenderer:
                 self._transient = True
 
     # ------------------------------------------------------------------
-    def run(self, stop_check, poll_s: float = 0.03) -> None:
-        """Drain the bus until `stop_check()` returns True."""
+    def run(self, stop_check, idle_timeout_s: float = 0.25) -> None:
+        """Drain the bus until `stop_check()` returns True.
+
+        Blocks on the queue rather than polling it. The old 30 Hz sleep loop
+        spent most of its wakeups finding nothing -- the same pattern that was
+        costing power (and, via GIL contention, latency) in the worker threads.
+        The timeout only exists so `stop_check()` is still consulted promptly.
+        """
         while not stop_check():
-            drained = False
-            for ev in self.bus.drain():
-                self.handle(ev)
-                drained = True
-            if not drained:
-                time.sleep(poll_s)
+            ev = self.bus.get(timeout=idle_timeout_s)
+            if ev is None:
+                continue
+            self.handle(ev)
+            for rest in self.bus.drain():      # take whatever else is queued
+                self.handle(rest)
         for ev in self.bus.drain():
             self.handle(ev)
         self._clear_transient()

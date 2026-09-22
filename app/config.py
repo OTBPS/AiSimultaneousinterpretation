@@ -38,7 +38,10 @@ class AsrCfg:
     model: str = r"D:\AI\Models\whisper-large-v3-turbo-int8-ov"
     device: str = "GPU"
     language: str = "en"
-    partial_interval_ms: int = 1500
+    # Off by default: measured (tools/measure_power.py A/B) that re-running
+    # Whisper every 1.5 s during speech doubles iGPU power, 2.46 W -> 5.02 W,
+    # to render a dim English preview line. Set to 1500 if you want it back.
+    partial_interval_ms: int = 0
     drop_hallucinations: bool = True
 
 

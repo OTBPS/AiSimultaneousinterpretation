@@ -182,14 +182,6 @@ def measure(phase: Phase, seconds: float, battery: bool) -> Phase:
     return phase
 
 
-def app_running() -> bool:
-    return "pythonw" in _ps("Get-Process pythonw -ErrorAction SilentlyContinue "
-                            "| Select-Object -ExpandProperty ProcessName") \
-        or "python" in _ps("Get-Process python -ErrorAction SilentlyContinue "
-                           "| Where-Object { $_.MainWindowTitle -like '*传译*' } "
-                           "| Select-Object -ExpandProperty ProcessName")
-
-
 def kill_app() -> None:
     _ps("Get-Process pythonw -ErrorAction SilentlyContinue | Stop-Process -Force")
     time.sleep(2)

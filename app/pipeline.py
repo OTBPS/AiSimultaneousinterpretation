@@ -50,10 +50,17 @@ class Pipeline:
             preroll_ms=cfg.vad.preroll_ms,
         ))
         self.worker = GpuWorker(cfg, self.bus, self.metrics)
+        self.worker.on_partial = self.on_partial_text
 
         self._source: AudioSource | None = None
         self._vad_thread: threading.Thread | None = None
         self._stop = threading.Event()
+        # Signalled by the audio callback so the VAD thread can block instead
+        # of polling. Polling every 4 ms is 250 wakeups/second that mostly
+        # find nothing, and sustained sub-millisecond timer activity keeps the
+        # CPU out of its deep C-states -- a cost paid by the whole system, not
+        # just this process.
+        self._data_ready = threading.Event()
         self._paused = False
         self._last_partial_at = 0.0
         self._ready = False
@@ -88,6 +95,7 @@ class Pipeline:
     # T1 -- real-time audio thread. Must not block, allocate heavily, or log.
     def _on_audio(self, frames: np.ndarray) -> None:
         self.ring.write(frames)
+        self._data_ready.set()
 
     # --------------------------------------------------------- switching
     def switch_source(self, source: str | None = None,
@@ -119,12 +127,28 @@ class Pipeline:
         self.bus.emit(StatusEvent("paused" if paused else "ready", ""))
 
     # -------------------------------------------------------------- T2
+    def _next_frame(self) -> np.ndarray | None:
+        """One VAD frame, blocking on the audio callback rather than polling.
+
+        The clear-then-recheck dance closes the lost-wakeup race: if the
+        callback fires between the failed read and the wait, the event is
+        already set and wait() returns immediately.
+        """
+        frame = self.ring.read(FRAME_SAMPLES)
+        if frame is not None:
+            return frame
+        self._data_ready.clear()
+        frame = self.ring.read(FRAME_SAMPLES)
+        if frame is not None:
+            return frame
+        self._data_ready.wait(0.1)
+        return None
+
     def _vad_loop(self) -> None:
         partial_interval = self.cfg.asr.partial_interval_ms / 1000.0
         while not self._stop.is_set():
-            frame = self.ring.read(FRAME_SAMPLES)
+            frame = self._next_frame()
             if frame is None:
-                time.sleep(0.004)
                 continue
             if self._paused:
                 continue
@@ -153,6 +177,21 @@ class Pipeline:
         tail = self.segmenter.flush()
         if tail is not None:
             self.worker.submit_segment(tail)
+
+    def on_partial_text(self, text: str) -> None:
+        """Feed the latest English hypothesis back to the segmenter.
+
+        This is what arms the eager endpoint (commit at 250 ms of silence when
+        the transcript already ends in .?!) instead of waiting the full 550 ms
+        hangover. It was dead code until now -- nothing called it, so the
+        eager path had never once fired in production.
+
+        It only works while partial ASR is enabled, and partials cost real
+        power: measured 2.46 W -> 5.02 W of iGPU. Off by default; turn
+        asr.partial_interval_ms back on if you want the lower latency and are
+        willing to pay for it.
+        """
+        self.segmenter.set_partial_text(text)
 
     # --------------------------------------------------------------- io
     @property

@@ -26,7 +26,8 @@ import logging
 import queue
 import threading
 import time
-from dataclasses import dataclass, field
+from collections.abc import Callable
+from dataclasses import dataclass
 
 import numpy as np
 
@@ -77,6 +78,16 @@ class GpuWorker:
         self._thread: threading.Thread | None = None
         self._stop = threading.Event()
         self._paused = threading.Event()
+        # Set whenever work is queued, so the loop can block instead of
+        # spinning at 200 Hz. Polling an empty queue burns wakeups and keeps
+        # the CPU out of deep C-states for no benefit.
+        self._wake = threading.Event()
+
+        # Optional hook back to the pipeline for partial transcripts; this is
+        # what arms the segmenter's eager endpoint. Kept as a callback rather
+        # than routed through the bus, because the bus has exactly one
+        # consumer (the frontend) and must not be split.
+        self.on_partial: Callable[[str], None] | None = None
 
         self.asr: AsrEngine | None = None
         self.mt: MtEngine | None = None
@@ -122,6 +133,7 @@ class GpuWorker:
     def submit_segment(self, seg: Segment) -> None:
         try:
             self._asr_q.put_nowait(AsrJob(seg))
+            self._wake.set()
         except queue.Full:
             self.metrics.dropped += 1
             log.warning("ASR queue full, dropped segment %d", seg.seq)
@@ -131,6 +143,7 @@ class GpuWorker:
             return                       # partials are a luxury, never a cost
         try:
             self._asr_q.put_nowait(PartialJob(audio))
+            self._wake.set()
         except queue.Full:
             pass
 
@@ -146,6 +159,7 @@ class GpuWorker:
 
     def stop(self) -> None:
         self._stop.set()
+        self._wake.set()                 # unblock the loop immediately
         if self.mt is not None:
             self.mt.cancel()
         if self._thread is not None:
@@ -177,8 +191,15 @@ class GpuWorker:
                     pass
 
             self._maybe_emit_metrics()
-            if not did_work:
-                time.sleep(0.005)
+            if did_work:
+                continue
+
+            # Nothing to do: clear, re-check (closing the lost-wakeup race),
+            # then block. The 0.25 s ceiling keeps metrics ticking and lets
+            # stop() be noticed promptly.
+            self._wake.clear()
+            if self._asr_q.empty() and self._mt_q.empty():
+                self._wake.wait(0.25)
 
     # -------------------------------------------------------------- ASR
     def _do_asr(self, job) -> None:
@@ -194,6 +215,8 @@ class GpuWorker:
             self.metrics.record_asr((time.perf_counter() - t0) * 1000)
             if text:
                 self.bus.emit(PartialEvent(text))
+                if self.on_partial is not None:
+                    self.on_partial(text)
             return
 
         seg = job.segment
@@ -215,6 +238,7 @@ class GpuWorker:
             cont = seg.is_continuation and i == 0
             self.bus.emit(LineStartEvent(line_id, unit, cont))
             self._mt_q.put(MtJob(line_id, unit, cont, seg.t_speech_end))
+            self._wake.set()
 
         self._shed_backlog()
 
