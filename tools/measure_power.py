@@ -13,12 +13,20 @@ Two instruments, because neither alone is sufficient:
 * Battery discharge rate (root\\wmi BatteryStatus) is whole-machine ground
   truth, but reads 0 while on AC. Run with --battery after unplugging.
 
-Method is a three-phase A/B so the app's marginal cost is isolated from
-whatever else the machine is doing:
+Method is a phased A/B so the app's marginal cost is isolated from whatever
+else the machine is doing:
 
-    1. baseline   app not running
-    2. idle       app running, silence on the wire
-    3. active     app running, speech playing, translating continuously
+    1. baseline     nothing running
+    2. idle         app running, silence on the wire
+    3. audio-only   speech playing out the speakers, app NOT running
+    4. active       speech playing, app running and translating
+
+Phase 3 exists because loopback capture needs real sound coming out of the
+speakers, and a laptop speaker at moderate volume is worth 1-3 W. Comparing
+`active` against `baseline` charges that to the app; comparing it against
+`audio-only` does not. An earlier run without this phase produced a
+whole-machine result that contradicted RAPL, and uncontrolled speaker volume
+was the leading suspect.
 
     python tools/measure_power.py
     python tools/measure_power.py --battery          (unplug first)
@@ -249,8 +257,10 @@ def main() -> int:
                     help="also record battery discharge (unplug the charger)")
     ap.add_argument("--wav", default="bench/speech.wav")
     ap.add_argument("--skip-idle", action="store_true",
-                    help="only baseline vs translating (halves the wall time; "
-                         "RAPL already shows idle costs ~0)")
+                    help="skip the silent-idle phase (RAPL shows it costs ~0)")
+    ap.add_argument("--skip-audio-ref", action="store_true",
+                    help="skip the audio-only reference phase; the app's cost "
+                         "then includes the speakers, which is usually wrong")
     args = ap.parse_args()
 
     setup_console()
@@ -281,12 +291,28 @@ def main() -> int:
         idle = measure(Phase("idle", "2/3 app idle (silence)"),
                        args.seconds, args.battery)
 
+    # Audio-only reference: the speakers cost watts, and they are not the
+    # app's fault. Measured with the app killed so only playback is running.
+    audio_ref = Phase("audio-only", "audio only (app off)")
+    if not args.skip_audio_ref:
+        kill_app()
+        stop_ref = threading.Event()
+        play_wav(ROOT / args.wav, stop_ref)
+        time.sleep(3)
+        audio_ref = measure(Phase("audio-only", "audio only (app off)"),
+                            args.seconds, args.battery)
+        stop_ref.set()
+        time.sleep(1)
+        start_app()
+        print("  reloading models …", end="", flush=True)
+        time.sleep(16)
+        print(" ok")
+
     stop_audio = threading.Event()
     play_wav(ROOT / args.wav, stop_audio)
     time.sleep(3)
-    active = measure(
-        Phase("active", ("2/2" if args.skip_idle else "3/3") + " app translating"),
-        args.seconds, args.battery)
+    active = measure(Phase("active", "app translating"),
+                     args.seconds, args.battery)
     stop_audio.set()
     time.sleep(1)
     kill_app()
@@ -296,7 +322,7 @@ def main() -> int:
     print("SoC power (Intel RAPL -- excludes display, wi-fi, fans)")
     print("=" * 68)
     print(f"{'':<26s}{'PKG':>10s}{'CPU':>10s}{'iGPU':>10s}")
-    for ph in (p for p in (baseline, idle, active) if p.samples):
+    for ph in (p for p in (baseline, idle, audio_ref, active) if p.samples):
         print(f"{ph.name:<26s}"
               f"{ph.mean('pkg')/1000:>9.2f}W"
               f"{ph.mean('cpu')/1000:>9.2f}W"
@@ -304,10 +330,12 @@ def main() -> int:
     print("-" * 68)
     d_idle = ((idle.mean("pkg") - baseline.mean("pkg")) / 1000
               if idle.samples else float("nan"))
-    d_act = (active.mean("pkg") - baseline.mean("pkg")) / 1000
+    ref = audio_ref if audio_ref.samples else baseline
+    d_act = (active.mean("pkg") - ref.mean("pkg")) / 1000
     if idle.samples:
         print(f"{'app cost, idle':<26s}{d_idle:>9.2f}W")
-    print(f"{'app cost, translating':<26s}{d_act:>9.2f}W")
+    print(f"{'app cost, translating':<26s}{d_act:>9.2f}W"
+          f"   (vs {ref.name})")
 
     if args.battery and any(p.battery() for p in (baseline, idle, active)):
         print("\n" + "=" * 68)
@@ -315,17 +343,20 @@ def main() -> int:
         print("=" * 68)
         print("(from energy drawn out of the pack, not the lagging "
               "DischargeRate reading)")
-        for ph in (p for p in (baseline, idle, active) if p.battery()):
+        for ph in (p for p in (baseline, idle, audio_ref, active)
+                   if p.battery()):
             w = ph.battery() / 1000
             hours = (cap_mwh / ph.battery()) if ph.battery() else 0
             err = ph.battery_quantisation_w() / 1000
             print(f"{ph.name:<26s}{w:>9.2f}W ±{err:.2f}   "
                   f"~{hours:>5.1f} h of battery")
-        extra = (active.battery() - baseline.battery()) / 1000
+        bref = audio_ref if audio_ref.battery() else baseline
+        extra = (active.battery() - bref.battery()) / 1000
         worst = (active.battery_quantisation_w()
-                 + baseline.battery_quantisation_w()) / 1000
+                 + bref.battery_quantisation_w()) / 1000
         print("-" * 68)
-        print(f"{'app cost, translating':<26s}{extra:>9.2f}W ±{worst:.2f}")
+        print(f"{'app cost, translating':<26s}{extra:>9.2f}W ±{worst:.2f}"
+              f"   (vs {bref.name})")
         if worst > abs(extra) * 0.5:
             print("\n  WARNING: the gauge's step size is large relative to the")
             print("  difference being measured. Re-run with a longer --seconds")
