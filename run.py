@@ -19,10 +19,10 @@ ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(ROOT))
 
 from app import config                                    # noqa: E402
-from app.console import (has_console, install_crash_log,       # noqa: E402
-                         setup_console)
+from app.console import (LOG_RELATIVE, has_console,            # noqa: E402
+                         install_crash_log, setup_console)
 
-LOG_FILE = ROOT / "logs" / "app.log"
+LOG_FILE = ROOT / LOG_RELATIVE
 
 
 def parse_args(argv=None):

@@ -25,6 +25,9 @@ from pathlib import Path
 _ANSI_ENABLED = False
 LOG_MAX_BYTES = 1_000_000
 LOG_BACKUPS = 1
+# Relative to the project root. Defined here so run.py and the tray menu
+# cannot drift apart about where the log lives.
+LOG_RELATIVE = Path("logs") / "app.log"
 
 
 def _enable_ansi() -> None:

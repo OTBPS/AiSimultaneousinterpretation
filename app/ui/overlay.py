@@ -241,6 +241,11 @@ class Overlay(QWidget):
         act_clear.triggered.connect(self.view.clear)
         menu.addAction(act_clear)
 
+        act_log = QAction("查看日志", self)
+        act_log.setToolTip("启动失败时，日志是唯一的线索")
+        act_log.triggered.connect(self._open_log)
+        menu.addAction(act_log)
+
         act_quit = QAction("退出", self)
         act_quit.triggered.connect(self._quit)
         menu.addAction(act_quit)
@@ -303,6 +308,31 @@ class Overlay(QWidget):
             self.pipeline.switch_source(value, None)
         except Exception as e:                            # noqa: BLE001
             self.view.set_status(f"切换失败: {e}")
+
+    def _open_log(self) -> None:
+        """Open the log in whatever the user has for text files.
+
+        Exists because the log is the only evidence when a launch fails, and
+        expecting anyone to remember a path three directories deep inside a
+        folder with spaces in its name is not a plan.
+        """
+        from ..console import LOG_RELATIVE
+
+        path = self.cfg.root / LOG_RELATIVE
+        if not path.exists():
+            self._tray.showMessage("还没有日志", f"启动后才会写入：\n{path}",
+                                   app_icon(self), 5000)
+            return
+        try:
+            import os
+
+            os.startfile(str(path))                        # noqa: S606
+        except Exception:                                  # noqa: BLE001
+            # No association for .log, or startfile unavailable: fall back to
+            # revealing it in Explorer, which always works.
+            import subprocess
+
+            subprocess.Popen(["explorer", "/select,", str(path)])
 
     def _quit(self) -> None:
         self._timer.stop()
