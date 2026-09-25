@@ -10,3 +10,4 @@ eval_noglossary.json
 *_merged/
 lora_adapter*/
 train.jsonl
+ui_state.json

@@ -43,11 +43,25 @@ class SubtitleView(QWidget):
         self._partial = ""
         self._status = ""
         self._caret = False
+        self.edit_mode = False
 
-        self._font = QFont("Microsoft YaHei UI", font_size, QFont.Weight.DemiBold)
-        self._font_src = QFont("Segoe UI", max(10, int(font_size * 0.62)))
+        self.font_size = font_size
+        self._apply_fonts()
         self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, False)
         self.setMinimumHeight(120)
+
+    def _apply_fonts(self) -> None:
+        self._font = QFont("Microsoft YaHei UI", self.font_size,
+                           QFont.Weight.DemiBold)
+        self._font_src = QFont("Segoe UI", max(10, int(self.font_size * 0.62)))
+
+    def set_font_size(self, size: int) -> None:
+        size = int(size)
+        if size == self.font_size:
+            return
+        self.font_size = size
+        self._apply_fonts()
+        self.update()
 
     # ------------------------------------------------------------- model
     def set_status(self, text: str) -> None:
@@ -116,6 +130,18 @@ class SubtitleView(QWidget):
         p.setPen(Qt.PenStyle.NoPen)
         p.setBrush(backdrop)
         p.drawRoundedRect(rect.adjusted(2, 2, -2, -2), 12, 12)
+
+        if self.edit_mode:
+            # Without a visible frame the user has nothing to aim at: the
+            # window is translucent and has no title bar or taskbar button.
+            p.setBrush(Qt.BrushStyle.NoBrush)
+            p.setPen(QPen(QColor(120, 200, 255, 220), 2.0))
+            p.drawRoundedRect(rect.adjusted(2, 2, -2, -2), 12, 12)
+            grip = 14.0
+            p.setPen(QPen(QColor(120, 200, 255, 200), 2.0))
+            for i in (0, 5, 10):
+                p.drawLine(int(rect.right() - grip + i), int(rect.bottom() - 4),
+                           int(rect.right() - 4), int(rect.bottom() - grip + i))
 
         pad = 16.0
         y = rect.height() - pad
