@@ -7,6 +7,7 @@ immediately instead of freezing for the ~3.4 s warm start.
 from __future__ import annotations
 
 import logging
+import os
 import sys
 import threading
 import time
@@ -20,6 +21,7 @@ from PySide6.QtWidgets import (QApplication, QMenu, QSystemTrayIcon, QVBoxLayout
 from ..bus import EventBus
 from ..config import Config
 from ..pipeline import Pipeline
+from ..single_instance import SingleInstance
 from ..types import (LineDoneEvent, LineSkippedEvent, LineStartEvent,
                      MetricsEvent, PartialEvent, StatusEvent, TokenEvent)
 from ..ui_state import MAX_FONT, MIN_FONT, MIN_HEIGHT, MIN_WIDTH, UiState
@@ -147,6 +149,9 @@ class Overlay(QWidget):
         self._timer.timeout.connect(self._drain)
         self._timer.start(int(1000 / self._drain_hz))
 
+        log.info("overlay started (pid %d), window at %s",
+                 os.getpid(), self.geometry().getRect())
+
         threading.Thread(target=self._start_pipeline, daemon=True,
                          name="pipeline-start").start()
 
@@ -261,6 +266,17 @@ class Overlay(QWidget):
     def _toggle_visible(self) -> None:
         self.setVisible(not self.isVisible())
 
+    def surface(self) -> None:
+        """Another launch happened: prove this one is alive and where it is."""
+        if not self.isVisible():
+            self.show()
+        self.raise_()
+        self._tray.showMessage(
+            "同声传译已经在运行",
+            "字幕窗就在屏幕上（可能是半透明的一条）。\n"
+            "托盘菜单 →「调整位置和大小」可以移动它。",
+            app_icon(self), 5000)
+
     def _toggle_pause(self, checked: bool) -> None:
         self._paused = checked
         self._act_pause.setText("继续" if checked else "暂停")
@@ -335,6 +351,7 @@ class Overlay(QWidget):
             subprocess.Popen(["explorer", "/select,", str(path)])
 
     def _quit(self) -> None:
+        log.info("quit requested (pid %d)", os.getpid())
         self._timer.stop()
         try:
             self.pipeline.stop()
@@ -497,6 +514,20 @@ class Overlay(QWidget):
 def run_gui(cfg: Config) -> int:
     app = QApplication(sys.argv)
     app.setQuitOnLastWindowClosed(False)     # tray keeps it alive
+
+    # Hand the launch to the running copy rather than starting a second one
+    # that nobody can see. This is what "the shortcut does nothing" actually
+    # was.
+    if SingleInstance.ping_existing():
+        log.info("already running; asked the existing instance to surface")
+        return 0
+
+    guard = SingleInstance(parent=app)
+    guard.listen()
+
     overlay = Overlay(cfg)
+    guard.activated.connect(overlay.surface)
     overlay.show()
-    return app.exec()
+    rc = app.exec()
+    guard.close()
+    return rc
