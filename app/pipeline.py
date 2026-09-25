@@ -32,6 +32,12 @@ log = logging.getLogger("pipeline")
 
 RING_SECONDS = 30
 
+# If the capture callback goes quiet for this long while we are not paused,
+# the stream has died. Windows does this silently when the default audio
+# endpoint changes or renegotiates its format -- common during a meeting --
+# and the symptom is an app that looks fine and subtitles nothing forever.
+AUDIO_STALL_S = 6.0
+
 
 class Pipeline:
     def __init__(self, cfg: Config, bus: EventBus | None = None) -> None:
@@ -64,6 +70,8 @@ class Pipeline:
         self._paused = False
         self._last_partial_at = 0.0
         self._ready = False
+        self._last_audio_at = 0.0
+        self._stall_reported = False
 
     # ------------------------------------------------------------ start
     def start(self) -> None:
@@ -90,11 +98,14 @@ class Pipeline:
             self.bus.emit(StatusEvent("error", str(e)))
             raise
         log.info("capture: %s", self._source.info)
+        self._last_audio_at = time.monotonic()
+        self._stall_reported = False
         self._source.start(self._on_audio)
 
     # T1 -- real-time audio thread. Must not block, allocate heavily, or log.
     def _on_audio(self, frames: np.ndarray) -> None:
         self.ring.write(frames)
+        self._last_audio_at = time.monotonic()
         self._data_ready.set()
 
     # --------------------------------------------------------- switching
@@ -144,11 +155,36 @@ class Pipeline:
         self._data_ready.wait(0.1)
         return None
 
+    def _check_audio_alive(self) -> None:
+        """Notice a capture stream that stopped delivering, and say so.
+
+        Without this the failure is completely silent: no exception, no log,
+        no visible change -- just subtitles that never appear again.
+        """
+        if self._paused or not self._last_audio_at:
+            return
+        quiet_for = time.monotonic() - self._last_audio_at
+        if quiet_for < AUDIO_STALL_S:
+            self._stall_reported = False
+            return
+        if self._stall_reported:
+            return
+        self._stall_reported = True
+        name = self._source.info.name if self._source else "?"
+        log.error("no audio for %.0fs from %s -- reopening", quiet_for, name)
+        self.bus.emit(StatusEvent("error", f"音频中断，正在重连：{name}"))
+        try:
+            self.switch_source()          # closes and reopens the same source
+            log.info("capture reopened")
+        except Exception as e:            # noqa: BLE001
+            log.error("reopen failed: %s", e)
+
     def _vad_loop(self) -> None:
         partial_interval = self.cfg.asr.partial_interval_ms / 1000.0
         while not self._stop.is_set():
             frame = self._next_frame()
             if frame is None:
+                self._check_audio_alive()
                 continue
             if self._paused:
                 continue

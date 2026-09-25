@@ -264,7 +264,9 @@ class Overlay(QWidget):
 
     # ----------------------------------------------------------- actions
     def _toggle_visible(self) -> None:
-        self.setVisible(not self.isVisible())
+        visible = not self.isVisible()
+        log.info("window %s by tray click", "shown" if visible else "HIDDEN")
+        self.setVisible(visible)
 
     def surface(self) -> None:
         """Another launch happened: prove this one is alive and where it is."""
@@ -278,6 +280,9 @@ class Overlay(QWidget):
             app_icon(self), 5000)
 
     def _toggle_pause(self, checked: bool) -> None:
+        # Logged because a paused pipeline and a broken one look identical
+        # from outside: the window is up, and it stays empty forever.
+        log.info("%s by user", "PAUSED" if checked else "resumed")
         self._paused = checked
         self._act_pause.setText("继续" if checked else "暂停")
         if self.pipeline.ready:
@@ -318,6 +323,7 @@ class Overlay(QWidget):
                 self._act_click_through.setChecked(True)
 
     def _switch_source(self, value: str) -> None:
+        log.info("audio source -> %s (requested by user)", value)
         if not self.pipeline.ready:
             return
         try:

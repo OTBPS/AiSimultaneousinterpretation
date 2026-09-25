@@ -166,6 +166,7 @@ class GpuWorker:
             self._thread.join(timeout=15)
 
     def set_paused(self, paused: bool) -> None:
+        log.info("gpu worker %s", "paused" if paused else "resumed")
         if paused:
             self._paused.set()
             if self.mt is not None:
