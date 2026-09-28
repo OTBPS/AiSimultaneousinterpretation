@@ -18,9 +18,59 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(ROOT))
 
-from app import config                                    # noqa: E402
-from app.console import (LOG_RELATIVE, has_console,            # noqa: E402
-                         install_crash_log, setup_console)
+BOOT_LOG = ROOT / "logs" / "startup_error.txt"
+
+
+def _die_visibly(stage: str, exc: BaseException) -> None:
+    """Report a failure that happens before logging exists.
+
+    Under pythonw there is no stdout or stderr, so an exception raised while
+    importing is written nowhere and the process just vanishes. Double-clicking
+    the shortcut then appears to do nothing at all -- no window, no error, no
+    log line -- which is exactly what was reported, twice, and what cost two
+    long debugging sessions.
+
+    So the very first thing this file does is make that case loud.
+    """
+    import traceback
+
+    detail = f"{stage}\n\n{type(exc).__name__}: {exc}\n\n" \
+             + traceback.format_exc()
+    try:
+        BOOT_LOG.parent.mkdir(parents=True, exist_ok=True)
+        BOOT_LOG.write_text(detail, encoding="utf-8")
+    except OSError:
+        pass
+    if sys.stderr is not None:
+        print(detail, file=sys.stderr)
+    else:
+        try:
+            import ctypes
+
+            ctypes.windll.user32.MessageBoxW(
+                None,
+                f"{stage}\n\n{type(exc).__name__}: {exc}\n\n详细信息：\n{BOOT_LOG}",
+                "同声传译 — 启动失败", 0x10)
+        except Exception:                                  # noqa: BLE001
+            pass
+    sys.exit(1)
+
+
+# app.console imports nothing but the standard library, so it is safe to pull
+# in before the streams are repaired -- and repairing them is what makes the
+# heavier imports below survivable under pythonw.
+try:
+    from app.console import (LOG_RELATIVE, ensure_std_streams,   # noqa: E402
+                             has_console, install_crash_log, setup_console)
+except BaseException as _e:                               # noqa: BLE001
+    _die_visibly("导入 app.console 失败 / failed to import app.console", _e)
+
+ensure_std_streams(BOOT_LOG.parent)
+
+try:
+    from app import config                                # noqa: E402
+except BaseException as _e:                               # noqa: BLE001
+    _die_visibly("导入依赖失败 / failed to import dependencies", _e)
 
 LOG_FILE = ROOT / LOG_RELATIVE
 
@@ -79,10 +129,18 @@ def main(argv=None) -> int:
     from app import storage
     storage.prepare(cfg.cache_path, cfg.runtime.cache_budget_gb)
 
-    if args.gui:
-        from app.ui.overlay import run_gui
-        return run_gui(cfg)
-    return run_cli(cfg)
+    # PySide6 and the OpenVINO runtime are imported lazily here, and they
+    # pull in native DLLs -- the most likely thing to fail under a different
+    # PATH than the one this was developed in.
+    try:
+        if args.gui:
+            from app.ui.overlay import run_gui
+            return run_gui(cfg)
+        return run_cli(cfg)
+    except BaseException as e:                            # noqa: BLE001
+        logging.getLogger("startup").critical("frontend failed", exc_info=True)
+        _die_visibly("启动界面失败 / frontend failed to start", e)
+        return 1
 
 
 def run_cli(cfg) -> int:

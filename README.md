@@ -152,6 +152,38 @@ Windows 在默认音频端点变化或格式重协商时会**静默地停掉采�
 另一个相关的竞态：`_open_audio` 原本先把新 source 赋给 `self._source`、再调 `start()`，
 中间那一瞬间 `is_alive()` 为 False，看门狗恰好撞进去就会误报。现在改成**启动成功后才发布**。
 
+### 桌面快捷方式走 launch.vbs
+
+快捷方式指向 `wscript.exe launch.vbs`，而不是直接指向 `pythonw.exe`。
+**Explorer 的环境变量和 shell 的不一样**，通过 PATH 解析 `pythonw.exe` 是最容易出问题的一环；
+启动器把解释器路径钉死，只在找不到时才退回 PATH。
+
+```bash
+python tools/make_shortcut.py            # 重建（原地覆盖）
+python tools/make_shortcut.py --remove   # 删除
+python tools/make_shortcut.py --direct   # 退回直连 pythonw 的旧形式
+```
+
+**踩过的坑：启动器一度用 `cmd /c ... > out 2> err` 重定向两个流。**
+这是错的——正在运行的实例一直占着那两个文件，第二次启动时 `cmd` 无法创建它们，
+于是整个命令失败、Python 根本没跑起来，**精确复现了这个启动器本来要消除的
+「双击没反应」症状**。诊断信息应该由 `run.py` 自己写（`logs/app.log`、
+`logs/startup_error.txt`），那条路径能正确处理并发启动。
+
+### 启动期崩溃现在一定可见
+
+`pythonw` 下 `sys.stdout` 和 `sys.stderr` 可能是 `None`。导入期任何一个库往 stderr 写东西
+（弃用提示、原生扩展警告）就会在 `None` 上抛 `AttributeError`，进程在写出第一行日志之前
+就消失了——从桌面看就是双击毫无反应。
+
+`run.py` 开头做两件事：
+
+1. `ensure_std_streams()` 把缺失的流指向 `logs/stdio.txt`，消除整类失败
+2. 所有导入都包在 `_die_visibly()` 里，失败时写 `logs/startup_error.txt` 并弹窗
+
+`has_console()` 不能简单写成 `sys.stderr is not None`——流被替换之后那个判断会说谎，
+在最需要弹窗的时候把弹窗关掉。
+
 ### 单实例
 
 程序已经在运行时再双击快捷方式，**不会启动第二个副本**，而是让已有实例弹出提示

@@ -45,7 +45,26 @@ def interpreter(console: bool) -> Path:
     return pythonw if pythonw.exists() else exe
 
 
-def build(name: str, console: bool, cli: bool) -> Path:
+def launch_target(cli: bool, direct: bool) -> tuple[str, str]:
+    """(target, arguments) for the .lnk.
+
+    The GUI shortcut goes through launch.vbs rather than straight to
+    pythonw.exe. Every launch that redirected stderr worked; every launch
+    that did not was reported as "the shortcut does nothing", twice. The
+    launcher redirects both streams to logs/ and still shows no console, so
+    the failure mode is gone and any recurrence leaves evidence.
+
+    --direct restores the old pythonw-only shortcut for comparison.
+    """
+    if cli or direct:
+        return (str(interpreter(cli)),
+                f'"{ROOT / "run.py"}" {"--cli" if cli else "--gui"}')
+    system_root = Path(os.environ.get("SystemRoot", "C:/Windows"))
+    wscript = system_root / "System32" / "wscript.exe"
+    return str(wscript), f'"{ROOT / "launch.vbs"}"' 
+
+
+def build(name: str, console: bool, cli: bool, direct: bool = False) -> Path:
     try:
         from win32com.client import Dispatch            # type: ignore
         shell = Dispatch("WScript.Shell")
@@ -55,9 +74,10 @@ def build(name: str, console: bool, cli: bool) -> Path:
         return _build_via_powershell(name, console, cli)
 
     path = desktop_dir() / f"{name}.lnk"
+    target, arguments = launch_target(cli, console and not cli)
     lnk = shell.CreateShortCut(str(path))
-    lnk.TargetPath = str(interpreter(console))
-    lnk.Arguments = f'"{ROOT / "run.py"}" {"--cli" if cli else "--gui"}'
+    lnk.TargetPath = target
+    lnk.Arguments = arguments
     lnk.WorkingDirectory = str(ROOT)
     lnk.IconLocation = f"{ROOT / 'assets' / 'app.ico'},0"
     lnk.Description = "同声传译 EN→ZH — 本机核显实时翻译"
@@ -71,11 +91,12 @@ def _build_via_powershell(name: str, console: bool, cli: bool) -> Path:
 
     path = desktop_dir() / f"{name}.lnk"
     icon = ROOT / "assets" / "app.ico"
+    _target, _arguments = launch_target(cli, console and not cli)
     script = f"""
 $ws = New-Object -ComObject WScript.Shell
 $lnk = $ws.CreateShortcut({_ps(str(path))})
-$lnk.TargetPath = {_ps(str(interpreter(console)))}
-$lnk.Arguments = {_ps(f'"{ROOT / "run.py"}" ' + ('--cli' if cli else '--gui'))}
+$lnk.TargetPath = {_ps(_target)}
+$lnk.Arguments = {_ps(_arguments)}
 $lnk.WorkingDirectory = {_ps(str(ROOT))}
 $lnk.IconLocation = {_ps(f'{icon},0')}
 $lnk.Description = {_ps('同声传译 EN→ZH — 本机核显实时翻译')}
@@ -98,6 +119,9 @@ def main() -> int:
                     help="launch with a visible console (python.exe)")
     ap.add_argument("--cli", action="store_true",
                     help="shortcut runs the terminal frontend (implies --console)")
+    ap.add_argument("--direct", action="store_true",
+                    help="target pythonw.exe directly instead of launch.vbs "
+                         "(no stderr capture; this is the form that failed)")
     ap.add_argument("--remove", action="store_true")
     args = ap.parse_args()
 
@@ -116,11 +140,15 @@ def main() -> int:
               file=sys.stderr)
         return 1
 
-    created = build(args.name, args.console or args.cli, args.cli)
+    created = build(args.name, args.console or args.cli or args.direct,
+                    args.cli, args.direct)
+    tgt, arg = launch_target(args.cli, args.direct)
     print(f"shortcut: {created}")
-    print(f"  target : {interpreter(args.console or args.cli)}")
+    print(f"  target : {tgt}")
+    print(f"  args   : {arg}")
     print(f"  workdir: {ROOT}")
-    print(f"  mode   : {'CLI' if args.cli else 'GUI overlay'}")
+    print(f"  mode   : {'CLI' if args.cli else 'GUI overlay'}"
+          + ("" if args.cli or args.direct else "  (via launch.vbs)"))
     return 0
 
 

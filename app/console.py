@@ -48,7 +48,48 @@ def _enable_ansi() -> None:
         pass
 
 
+_STREAMS_SUBSTITUTED = False
+
+
+def ensure_std_streams(log_dir: Path) -> None:
+    """Give pythonw usable stdout/stderr before anything else is imported.
+
+    Under pythonw.exe both are None. Any library that writes to sys.stderr
+    while being imported -- a deprecation notice, a native-extension warning --
+    then raises AttributeError on None and kills the process before a single
+    line of logging exists. From the desktop that looks like the shortcut
+    doing nothing at all: no window, no error, no log.
+
+    This module imports nothing but the standard library, so it is safe to
+    call before the heavy dependencies come in.
+    """
+    global _STREAMS_SUBSTITUTED
+    if sys.stdout is not None and sys.stderr is not None:
+        return
+    try:
+        log_dir.mkdir(parents=True, exist_ok=True)
+        stream = open(log_dir / "stdio.txt", "a", encoding="utf-8",
+                      errors="replace", buffering=1)
+    except OSError:
+        import io
+
+        stream = io.StringIO()               # swallow, never crash
+    if sys.stdout is None:
+        sys.stdout = stream
+    if sys.stderr is None:
+        sys.stderr = stream
+    _STREAMS_SUBSTITUTED = True
+
+
 def has_console() -> bool:
+    """Can the user actually see what we write to stderr?
+
+    NOT simply `sys.stderr is not None`: once ensure_std_streams has pointed
+    the missing streams at a file, that check would report a console where
+    there is none, and suppress the error dialog exactly when it matters.
+    """
+    if _STREAMS_SUBSTITUTED:
+        return False
     return sys.stdout is not None and sys.stderr is not None
 
 
