@@ -48,6 +48,16 @@ class AudioSource(abc.ABC):
     @abc.abstractmethod
     def info(self) -> DeviceInfo: ...
 
+    @abc.abstractmethod
+    def is_alive(self) -> bool:
+        """Is the capture stream still running?
+
+        This is the ONLY valid signal that a stream has died. Callback
+        timing is not: WASAPI loopback delivers exactly zero callbacks while
+        the render endpoint is idle, so "no audio for N seconds" is the
+        normal state of a quiet machine, not a fault.
+        """
+
     def __enter__(self):
         return self
 

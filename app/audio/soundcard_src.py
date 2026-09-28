@@ -61,6 +61,9 @@ class SoundCardSource(AudioSource):
     def info(self) -> DeviceInfo:
         return self._info
 
+    def is_alive(self) -> bool:
+        return self._thread is not None and self._thread.is_alive()
+
     def _loop(self) -> None:
         frames = int(NATIVE_SR * BLOCK_MS / 1000)
         try:

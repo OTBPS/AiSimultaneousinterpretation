@@ -99,6 +99,14 @@ class WasapiSource(AudioSource):
     def info(self) -> DeviceInfo:
         return self._info
 
+    def is_alive(self) -> bool:
+        if self._stream is None:
+            return False
+        try:
+            return self._stream.is_active() and not self._stream.is_stopped()
+        except Exception:                                  # noqa: BLE001
+            return False                                   # stream object died
+
     def _on_audio(self, in_data, frame_count, time_info, status):
         try:
             raw = np.frombuffer(in_data, dtype=np.float32)

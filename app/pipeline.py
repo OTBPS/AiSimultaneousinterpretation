@@ -32,11 +32,15 @@ log = logging.getLogger("pipeline")
 
 RING_SECONDS = 30
 
-# If the capture callback goes quiet for this long while we are not paused,
-# the stream has died. Windows does this silently when the default audio
-# endpoint changes or renegotiates its format -- common during a meeting --
-# and the symptom is an app that looks fine and subtitles nothing forever.
-AUDIO_STALL_S = 6.0
+# How often to ask the capture backend whether its stream is still running.
+#
+# Note what this does NOT do: it does not time the callbacks. An earlier
+# version reopened the device after 6 s without audio, which looked correct
+# in a test run while a meeting was playing -- and then reopened the device
+# every 6 seconds forever on a quiet machine. WASAPI loopback delivers
+# exactly ZERO callbacks while the render endpoint is idle (measured), so
+# silence carries no information about the stream's health.
+AUDIO_CHECK_S = 1.0
 
 
 class Pipeline:
@@ -71,7 +75,8 @@ class Pipeline:
         self._last_partial_at = 0.0
         self._ready = False
         self._last_audio_at = 0.0
-        self._stall_reported = False
+        self._last_check_at = 0.0
+        self._dead_reported = False
 
     # ------------------------------------------------------------ start
     def start(self) -> None:
@@ -91,16 +96,22 @@ class Pipeline:
 
     def _open_audio(self) -> None:
         try:
-            self._source = open_source(self.cfg.audio.backend,
-                                       self.cfg.audio.source,
-                                       self.cfg.audio.device)
+            source = open_source(self.cfg.audio.backend,
+                                 self.cfg.audio.source,
+                                 self.cfg.audio.device)
         except CaptureError as e:
             self.bus.emit(StatusEvent("error", str(e)))
             raise
-        log.info("capture: %s", self._source.info)
+        log.info("capture: %s", source.info)
+        source.start(self._on_audio)
+
+        # Published only once it is actually running. Assigning self._source
+        # before start() leaves a window in which the watchdog, running on
+        # the VAD thread, sees a not-yet-started stream and declares it dead.
         self._last_audio_at = time.monotonic()
-        self._stall_reported = False
-        self._source.start(self._on_audio)
+        self._dead_reported = False
+        self._last_check_at = time.monotonic()
+        self._source = source
 
     # T1 -- real-time audio thread. Must not block, allocate heavily, or log.
     def _on_audio(self, frames: np.ndarray) -> None:
@@ -156,22 +167,30 @@ class Pipeline:
         return None
 
     def _check_audio_alive(self) -> None:
-        """Notice a capture stream that stopped delivering, and say so.
+        """Reopen the capture stream if the backend says it stopped.
 
-        Without this the failure is completely silent: no exception, no log,
-        no visible change -- just subtitles that never appear again.
+        Asks the stream, rather than inferring from silence. A quiet machine
+        produces no callbacks at all, so callback timing cannot distinguish
+        "nobody is playing anything" from "the device is gone" -- and acting
+        on that confusion means reopening the device every few seconds for as
+        long as the room is quiet.
         """
-        if self._paused or not self._last_audio_at:
+        now = time.monotonic()
+        if now - self._last_check_at < AUDIO_CHECK_S:
             return
-        quiet_for = time.monotonic() - self._last_audio_at
-        if quiet_for < AUDIO_STALL_S:
-            self._stall_reported = False
+        self._last_check_at = now
+
+        if self._paused or self._source is None:
             return
-        if self._stall_reported:
+        if self._source.is_alive():
+            self._dead_reported = False
             return
-        self._stall_reported = True
-        name = self._source.info.name if self._source else "?"
-        log.error("no audio for %.0fs from %s -- reopening", quiet_for, name)
+        if self._dead_reported:
+            return                       # already tried; do not loop on it
+
+        self._dead_reported = True
+        name = self._source.info.name
+        log.error("capture stream stopped (%s) -- reopening", name)
         self.bus.emit(StatusEvent("error", f"音频中断，正在重连：{name}"))
         try:
             self.switch_source()          # closes and reopens the same source
