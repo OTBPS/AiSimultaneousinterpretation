@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+import os
 import signal
 import sys
 import threading
@@ -128,6 +129,21 @@ def main(argv=None) -> int:
     # Bound the on-disk footprint before anything writes to it.
     from app import storage
     storage.prepare(cfg.cache_path, cfg.runtime.cache_budget_gb)
+
+    # Single-instance FIRST, before the frontend drags in PySide6 and the
+    # OpenVINO runtime. Deciding afterwards means a duplicate launch pays for
+    # gigabytes of imports only to discover it is redundant -- one such
+    # process was left sitting at 6 MB with nothing to do.
+    if args.gui:
+        from app.single_instance import claim_mutex, notify_existing
+
+        mutex, first = claim_mutex()
+        if not first:
+            notify_existing()
+            logging.getLogger("instance").info(
+                "already running; asked the existing instance to surface")
+            os._exit(0)          # nothing to unwind; do not linger
+        globals()["_INSTANCE_MUTEX"] = mutex      # keep the handle alive
 
     # PySide6 and the OpenVINO runtime are imported lazily here, and they
     # pull in native DLLs -- the most likely thing to fail under a different

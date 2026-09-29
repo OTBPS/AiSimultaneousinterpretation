@@ -152,6 +152,27 @@ Windows 在默认音频端点变化或格式重协商时会**静默地停掉采�
 另一个相关的竞态：`_open_audio` 原本先把新 source 赋给 `self._source`、再调 `start()`，
 中间那一瞬间 `is_alive()` 为 False，看门狗恰好撞进去就会误报。现在改成**启动成功后才发布**。
 
+### 依赖装在项目自己的 .venv 里
+
+```bash
+python -m venv .venv
+.venv\Scripts\python -m pip install -r requirements.txt
+```
+
+**这是那个「双击没反应」的真正根因。** 依赖原本是 `pip install --user` 装到
+`AppData\Roaming\Python\Python312\site-packages` 的。这台机器上有五个以上的 Python
+（3.11 / 3.12 / 3.14、MySQL 自带 3.13、codex 运行时……），从 shell 跑一切正常，
+从 Explorer 双击时却拿不到那个用户站点目录——报的是：
+
+```
+ModuleNotFoundError: No module named 'yaml'
+```
+
+venv 把解释器和依赖绑在一起，PATH 和用户站点都不再参与，整类问题消失。
+
+Windows 上 `.venv\Scripts\pythonw.exe` 是个重定向器，会拉起基础解释器，
+所以任务管理器里会看到**两个 pythonw**：一个 6 MB 的转发壳，一个真正干活的。这是正常的。
+
 ### 桌面快捷方式走 launch.vbs
 
 快捷方式指向 `wscript.exe launch.vbs`，而不是直接指向 `pythonw.exe`。
@@ -193,8 +214,17 @@ python tools/make_shortcut.py --direct   # 退回直连 pythonw 的旧形式
 看起来和"启动失败"一模一样。当时查了很久才发现程序其实一直好好地运行着。
 日志现在也会记录 `overlay started (pid …)` 和窗口坐标，下次一眼就能分辨。
 
-用 QLocalServer 命名管道实现，不用锁文件——崩溃残留的锁文件会永久堵死后续启动，
-那是拿一个静默故障换一个更糟的。
+**互斥用的是命名互斥体，不是 QLocalServer。** 一开始以为 socket 能同时担任两个角色，
+实测发现 **Windows 的命名管道允许同名多实例**：同一秒启动的两个进程 `listen()` 都成功，
+两个都跑完了——正是这个守卫要阻止的事（当时是 4 个进程、2 个完整界面）。
+`CreateMutexW` 是原子的，会返回 `ERROR_ALREADY_EXISTS`，由它裁决归属；
+管道只负责把「请现身」送给赢家。
+
+互斥体也优于锁文件：进程死了内核就释放，崩溃不会留下永久堵死后续启动的东西。
+
+判定发生在 `run.py`，**在导入 PySide6 和 OpenVINO 之前**。放在之后的话，
+重复启动要先吃掉几 GB 的导入才发现自己多余——实测留下过一个 6 MB 的僵进程。
+重复启动现在约 0.2 秒内就退出了。
 
 ### 调整字幕窗
 

@@ -37,11 +37,20 @@ def desktop_dir() -> Path:
 
 
 def interpreter(console: bool) -> Path:
-    """pythonw.exe for a GUI launch (no console window), python.exe otherwise."""
+    """The project venv if it exists, else whatever is running this script.
+
+    The venv matters: this machine has several Python installs, and the
+    dependencies were once reachable from a shell but not from Explorer
+    because they lived in the per-user site directory.
+    """
+    name = "python.exe" if console else "pythonw.exe"
+    venv = ROOT / ".venv" / "Scripts" / name
+    if venv.exists():
+        return venv
     exe = Path(sys.executable)
     if console:
         return exe
-    pythonw = exe.with_name("pythonw.exe")
+    pythonw = exe.with_name(name)
     return pythonw if pythonw.exists() else exe
 
 

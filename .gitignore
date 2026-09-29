@@ -2,6 +2,7 @@
 *.py[cod]
 *_merged/
 .ovcache/
+.venv/
 __pycache__/
 bench/verify.txt
 eval_noglossary.json

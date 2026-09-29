@@ -195,3 +195,84 @@ def test_metrics_tick_does_not_cancel_real_activity():
     for ev in (TokenEvent(1, "你好"), MetricsEvent(backlog=0)):
         saw |= is_activity(ev)
     assert saw is True
+
+
+# ------------------------------------------------- single-instance locking
+#
+# Exclusivity must come from the mutex, not from QLocalServer. On Windows a
+# named pipe accepts additional server instances under the same name, so
+# listen() succeeded for two launches in the same second and both ran to
+# completion -- four pythonw processes, two full overlays.
+def test_named_mutex_is_exclusive():
+    import ctypes
+    import sys
+
+    from app.single_instance import claim_mutex
+
+    if sys.platform != "win32":
+        pytest.skip("mutex path is Windows-only")
+
+    name = r"Local\ai_interp_test_exclusive"
+    h1, first1 = claim_mutex(name)
+    h2, first2 = claim_mutex(name)
+    try:
+        assert first1 is True, "first claim must win"
+        assert first2 is False, "second claim must lose"
+    finally:
+        for h in (h1, h2):
+            if h:
+                ctypes.windll.kernel32.CloseHandle(h)
+
+
+def test_mutex_is_released_when_handles_close():
+    """A crash must not leave something that blocks every future launch."""
+    import ctypes
+    import sys
+
+    from app.single_instance import claim_mutex
+
+    if sys.platform != "win32":
+        pytest.skip("mutex path is Windows-only")
+
+    name = r"Local\ai_interp_test_release"
+    h1, first1 = claim_mutex(name)
+    assert first1
+    ctypes.windll.kernel32.CloseHandle(h1)
+
+    h2, first2 = claim_mutex(name)
+    try:
+        assert first2 is True, "name should be free again"
+    finally:
+        ctypes.windll.kernel32.CloseHandle(h2)
+
+
+def test_instance_is_claimed_before_the_heavy_imports():
+    """The guard must run before PySide6 and OpenVINO are pulled in.
+
+    Deciding afterwards is not merely wasteful: a duplicate launch spends
+    seconds and gigabytes importing before discovering it is redundant, and
+    one such process was observed sitting at 6 MB doing nothing at all.
+    """
+    from pathlib import Path as _Path
+
+    src = _Path("run.py").read_text(encoding="utf-8")
+    claim_at = src.index("claim_mutex()")
+    import_at = src.index("from app.ui.overlay import run_gui")
+    assert claim_at < import_at,         "single-instance check must precede importing the frontend"
+
+
+def test_duplicate_launch_exits_without_unwinding():
+    """os._exit, not return: there is nothing to clean up and Qt can hang."""
+    from pathlib import Path as _Path
+
+    src = _Path("run.py").read_text(encoding="utf-8")
+    block = src[src.index("claim_mutex()"):src.index("from app.ui.overlay")]
+    assert "os._exit(0)" in block
+
+
+def test_mutex_handle_is_kept_alive():
+    """Letting the handle be garbage collected releases the lock silently."""
+    from pathlib import Path as _Path
+
+    src = _Path("run.py").read_text(encoding="utf-8")
+    assert "_INSTANCE_MUTEX" in src,         "the mutex handle must outlive the function that claimed it"

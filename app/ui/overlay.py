@@ -521,13 +521,8 @@ def run_gui(cfg: Config) -> int:
     app = QApplication(sys.argv)
     app.setQuitOnLastWindowClosed(False)     # tray keeps it alive
 
-    # Hand the launch to the running copy rather than starting a second one
-    # that nobody can see. This is what "the shortcut does nothing" actually
-    # was.
-    if SingleInstance.ping_existing():
-        log.info("already running; asked the existing instance to surface")
-        return 0
-
+    # run.py already won the mutex before importing any of this; all that is
+    # left is to answer "show yourself" requests from later launches.
     guard = SingleInstance(parent=app)
     guard.listen()
 

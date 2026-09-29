@@ -1,9 +1,12 @@
 ' Hidden launcher for the desktop shortcut.
 '
 ' Why this exists rather than pointing the shortcut straight at pythonw.exe:
-' Explorer's environment is not a shell's, and resolving pythonw.exe through
-' PATH is the part most likely to differ. This pins the interpreter to the
-' known install and only falls back to PATH.
+' Explorer's environment is not a shell's, and this machine has five-plus
+' Python installations. A double-click once died with ModuleNotFoundError:
+' No module named 'yaml' while the same command worked from a shell, because
+' the dependencies lived in the per-user site directory rather than with the
+' interpreter. So the launcher prefers the project's own .venv, which carries
+' its dependencies and depends on neither PATH nor the user site.
 '
 ' An earlier version of this file also piped both streams through
 ' "cmd /c ... > out 2> err". That was a mistake: the running instance keeps
@@ -37,10 +40,12 @@ If Not fso.FileExists(runpy) Then
     WScript.Quit 1
 End If
 
-' Explorer's PATH can differ from a shell's, so prefer the known install and
-' only fall back to PATH resolution.
-pythonw = sh.ExpandEnvironmentStrings("%LOCALAPPDATA%") & _
-          "\Programs\Python\Python312\pythonw.exe"
+' 1) the project venv  2) the known 3.12 install  3) whatever PATH finds
+pythonw = fso.BuildPath(root, ".venv\Scripts\pythonw.exe")
+If Not fso.FileExists(pythonw) Then
+    pythonw = sh.ExpandEnvironmentStrings("%LOCALAPPDATA%") & _
+              "\Programs\Python\Python312\pythonw.exe"
+End If
 If Not fso.FileExists(pythonw) Then
     pythonw = "pythonw.exe"
 End If
